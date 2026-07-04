@@ -77,8 +77,11 @@ def init_db():
             PRIMARY KEY(match_id, puuid))""")
 
 
-def store(m):
-    """Flatten one match-v5 payload into participant rows. Idempotent (upsert)."""
+_PART_SQL = "INSERT OR REPLACE INTO participants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+
+
+def participant_rows(m):
+    """Flatten one match-v5 payload into participant row tuples."""
     info, mid = m["info"], m["metadata"]["matchId"]
     rows = []
     for p in info["participants"]:
@@ -88,8 +91,18 @@ def store(m):
                      p.get("kills", 0), p.get("deaths", 0), p.get("assists", 0),
                      cs, p.get("totalDamageDealtToChampions", 0),
                      info.get("gameDuration", 0), info.get("gameStartTimestamp", 0)))
+    return rows
+
+
+def insert_participants(conn, rows):
+    conn.executemany(_PART_SQL, rows)
+
+
+def store(m):
+    """Flatten and persist one match on its own connection. Idempotent (upsert)."""
+    rows = participant_rows(m)
     with sqlite3.connect(DB) as c:
-        c.executemany("INSERT OR REPLACE INTO participants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        insert_participants(c, rows)
     return len(rows)
 
 

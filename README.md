@@ -15,13 +15,21 @@ job, not proof that you actually played worse.
 The question this project actually tries to answer is narrower:
 
 > Inside a play session, does a player's own performance (deaths, CS per minute,
-> KDA, damage) get worse during a losing streak compared to that same player's
-> normal baseline, and is there a point where it's a statistical mistake to keep
-> queuing?
+> KDA, damage) measurably drift from that same player's normal baseline during a
+> losing streak — and by how much?
 
 Comparing a player against their own baseline is the important part. It separates
 tilt (actually playing worse) from matchmaking, which would drag your win rate
 down regardless.
+
+That's a descriptive question, and it's the one the data can actually answer. Note
+what it doesn't claim: it doesn't tell you what to *do* about a bad streak. The
+same baseline that flags a losing streak as below-average play also flags a hot
+streak as above-average — both are distortions of your true level, not verdicts.
+There's a narrower statistical statement you can layer on top ("continuing has
+negative expected LP right now"), but whether the right response is to log off, to
+push through and correct, or to just keep having fun depends on what you're playing
+for. The project reports the drift and leaves that call to you.
 
 ## How it works
 
@@ -36,7 +44,9 @@ Four stages:
    time), find losing streaks, and compare performance during those streaks to
    the player's baseline.
 4. Serve. A small web page where you enter your Riot ID and see your own profile:
-   where your play tends to fall off, and where you should stop.
+   where your play tends to fall off relative to your baseline, and the point past
+   which continuing costs you rank on average. It's a mirror, not a stop sign — the
+   numbers are shown; the decision stays yours.
 
 ## Data and API use
 

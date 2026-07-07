@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-Phase 1: the crawler. Turns the one-shot slice into a real dataset gatherer.
+Phase 1: the crawler. Gathers a rank-stratified dataset for the tilt study.
 
-Seeds from the ranked ladders, then snowballs outward: every match brings 9 more
-players into the frontier. Rate-limited so it stays under the Riot limits, and
-fully resumable, all crawl state lives in the same SQLite file, so a kill and
-restart picks up exactly where it left off.
+Seed-driven: it seeds a capped set of players per tier from the ranked ladders,
+then pulls each seed's deep match history. It only crawls known-tier seeds, and
+it picks the next player from whichever tier is currently behind, so the tiers
+grow evenly instead of finishing one before starting the next. Rate-limited and
+fully resumable; all state is in the SQLite file.
 
+  python crawl.py seed       # add seeds for the configured tiers (safe to re-run)
   python crawl.py            # seed if empty, then crawl toward the target
-  python crawl.py status     # print progress without crawling
+  python crawl.py status     # progress by tier, no crawling
 
 Config (env / .env):
   RIOT_API_KEY               required
-  RIOT_PLATFORM   na1        ladder + summoner routing (platform)
+  RIOT_PLATFORM   na1        ladder routing (platform)
   RIOT_REGION     americas   match routing (regional cluster)
-  RIOT_QUEUE      420        ranked solo/duo
-  RIOT_RPS        15         request/sec cap (a safety net; 429s are still honored)
-  CRAWL_TARGET_MATCHES        20000
-  CRAWL_MATCHES_PER_PLAYER    20
+  RIOT_QUEUE      420         ranked solo/duo
+  RIOT_RPS        0.8         request/sec cap (0.83 = the 100-per-2-min ceiling)
+  SEED_TIERS      GOLD,PLATINUM,EMERALD,DIAMOND,MASTER
+  CRAWL_TIERS     (= SEED_TIERS)   which tiers to actually crawl
+  SEED_PER_TIER   500
+  CRAWL_TARGET_MATCHES        30000
+  CRAWL_MATCHES_PER_PLAYER    100
 """
 
 import os
@@ -25,20 +30,30 @@ import sqlite3
 import sys
 import time
 
-import ingest  # reuse the schema, env loading, and match flattening
+import ingest
 
 KEY = os.environ.get("RIOT_API_KEY")
 PLATFORM = os.environ.get("RIOT_PLATFORM", "na1")
 REGION = os.environ.get("RIOT_REGION", "americas")
 QUEUE = int(os.environ.get("RIOT_QUEUE", "420"))
-RATE = float(os.environ.get("RIOT_RPS", "15"))
-TARGET = int(os.environ.get("CRAWL_TARGET_MATCHES", "20000"))
-PER_PLAYER = int(os.environ.get("CRAWL_MATCHES_PER_PLAYER", "20"))
+RATE = float(os.environ.get("RIOT_RPS", "0.8"))
+TARGET = int(os.environ.get("CRAWL_TARGET_MATCHES", "30000"))
+PER_PLAYER = int(os.environ.get("CRAWL_MATCHES_PER_PLAYER", "100"))
+SEED_TIERS = os.environ.get("SEED_TIERS", "GOLD,PLATINUM,EMERALD,DIAMOND,MASTER")
+CRAWL_TIERS = os.environ.get("CRAWL_TIERS", SEED_TIERS)
+SEED_PER_TIER = int(os.environ.get("SEED_PER_TIER", "500"))
 
 PLATFORM_BASE = f"https://{PLATFORM}.api.riotgames.com"
 REGION_BASE = f"https://{REGION}.api.riotgames.com"
+DIVISIONS = ["I", "II", "III", "IV"]
+APEX = {"MASTER": "masterleagues", "GRANDMASTER": "grandmasterleagues",
+        "CHALLENGER": "challengerleagues"}
 _MIN_INTERVAL = 1.0 / RATE if RATE > 0 else 0.0
 _last = [0.0]
+
+
+def _tiers(csv):
+    return [t.strip().upper() for t in csv.split(",") if t.strip()]
 
 
 # --- HTTP with rate limiting + backoff ------------------------------------
@@ -76,7 +91,7 @@ def match(mid):
 # --- crawl state ----------------------------------------------------------
 
 def init_crawl_db(conn):
-    ingest.init_db()  # participants table
+    ingest.init_db()
     conn.execute("""CREATE TABLE IF NOT EXISTS players(
         puuid TEXT PRIMARY KEY, tier TEXT, status TEXT DEFAULT 'pending')""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_player_status ON players(status)")
@@ -85,40 +100,69 @@ def init_crawl_db(conn):
     conn.commit()
 
 
-def seed_from_ladders(conn):
-    """Seed the frontier from the apex ladders. One call per tier.
-    Relies on puuid being present on league entries (current API). If a chunk
-    comes back without puuids, it warns rather than firing thousands of
-    summoner-v4 lookups."""
-    tiers = [("challengerleagues", "CHALLENGER"),
-             ("grandmasterleagues", "GRANDMASTER"),
-             ("masterleagues", "MASTER")]
-    added, missing = 0, 0
-    for endpoint, tier in tiers:
-        data = _get(PLATFORM_BASE, f"/lol/league/v4/{endpoint}/by-queue/RANKED_SOLO_5x5")
-        if not data:
-            continue
-        for e in data.get("entries", []):
-            puuid = e.get("puuid")
-            if not puuid:
-                missing += 1
-                continue
+# --- seeding --------------------------------------------------------------
+
+def _apex_puuids(tier, cap):
+    data = _get(PLATFORM_BASE, f"/lol/league/v4/{APEX[tier]}/by-queue/RANKED_SOLO_5x5")
+    if not data:
+        return []
+    return [e["puuid"] for e in data.get("entries", []) if e.get("puuid")][:cap]
+
+
+def _entry_puuids(tier, cap):
+    out = []
+    for div in DIVISIONS:
+        page = 1
+        while len(out) < cap:
+            data = _get(PLATFORM_BASE,
+                        f"/lol/league/v4/entries/RANKED_SOLO_5x5/{tier}/{div}", page=page)
+            if not data:
+                break
+            out.extend(e["puuid"] for e in data if e.get("puuid"))
+            page += 1
+        if len(out) >= cap:
+            break
+    return out[:cap]
+
+
+def seed(conn=None):
+    own = conn is None
+    if own:
+        conn = sqlite3.connect(ingest.DB)
+        init_crawl_db(conn)
+    for t in _tiers(SEED_TIERS):
+        puuids = _apex_puuids(t, SEED_PER_TIER) if t in APEX else _entry_puuids(t, SEED_PER_TIER)
+        added = 0
+        for pu in puuids:
             added += conn.execute(
                 "INSERT OR IGNORE INTO players(puuid, tier, status) VALUES(?,?,'pending')",
-                (puuid, tier)).rowcount
+                (pu, t)).rowcount
         conn.commit()
-        print(f"  seeded {tier}: +{added} total")
-    if missing:
-        print(f"  note: {missing} entries had no puuid; if this is most of them, "
-              f"the league DTO shape changed and needs a summoner-v4 fallback.")
-    return added
+        print(f"  seeded {t}: +{added} new (of {len(puuids)} fetched)")
+    if own:
+        conn.close()
 
 
-def _counts(conn):
-    fetched = conn.execute("SELECT COUNT(*) FROM seen_matches WHERE fetched=1").fetchone()[0]
-    pending = conn.execute("SELECT COUNT(*) FROM players WHERE status='pending'").fetchone()[0]
-    done = conn.execute("SELECT COUNT(*) FROM players WHERE status='done'").fetchone()[0]
-    return fetched, pending, done
+# --- balanced player selection --------------------------------------------
+
+def _next_player(conn):
+    """Pending seed from whichever crawl tier has the fewest done players, so
+    tiers grow evenly. Only known-tier seeds are ever selected."""
+    tiers = _tiers(CRAWL_TIERS)
+    ph = ",".join("?" * len(tiers))
+    pend = [r[0] for r in conn.execute(
+        f"SELECT DISTINCT tier FROM players WHERE status='pending' AND tier IN ({ph})",
+        tiers)]
+    if not pend:
+        return None
+    done = dict(conn.execute(
+        f"SELECT tier, COUNT(*) FROM players WHERE status='done' AND tier IN ({ph}) "
+        f"GROUP BY tier", tiers).fetchall())
+    target = min(pend, key=lambda t: done.get(t, 0))
+    row = conn.execute(
+        "SELECT puuid FROM players WHERE status='pending' AND tier=? ORDER BY rowid LIMIT 1",
+        (target,)).fetchone()
+    return (row[0], target) if row else None
 
 
 # --- main loop ------------------------------------------------------------
@@ -128,23 +172,21 @@ def crawl():
         sys.exit("Set RIOT_API_KEY (copy .env.example -> .env).")
     conn = sqlite3.connect(ingest.DB)
     init_crawl_db(conn)
-
     if conn.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 0:
         print("seeding from ladders...")
-        seed_from_ladders(conn)
+        seed(conn)
 
-    stored, pending, _ = _counts(conn)
-    print(f"resuming: {stored} matches fetched, {pending} players pending, target {TARGET}")
-    t0, start_stored = time.monotonic(), stored
+    stored = conn.execute("SELECT COUNT(*) FROM seen_matches WHERE fetched=1").fetchone()[0]
+    print(f"resuming: {stored} matches fetched, target {TARGET}, tiers {CRAWL_TIERS}")
+    t0, start = time.monotonic(), stored
 
     try:
         while stored < TARGET:
-            row = conn.execute(
-                "SELECT puuid FROM players WHERE status='pending' LIMIT 1").fetchone()
-            if not row:
-                print("frontier empty; nothing left to crawl.")
+            nxt = _next_player(conn)
+            if not nxt:
+                print("no pending seeds left in crawl tiers; done.")
                 break
-            puuid = row[0]
+            puuid, tier = nxt
             for mid in match_ids(puuid):
                 seen = conn.execute(
                     "SELECT fetched FROM seen_matches WHERE match_id=?", (mid,)).fetchone()
@@ -156,16 +198,11 @@ def crawl():
                     continue
                 ingest.insert_participants(conn, ingest.participant_rows(m))
                 conn.execute("UPDATE seen_matches SET fetched=1 WHERE match_id=?", (mid,))
-                for p in m["info"]["participants"]:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO players(puuid, status) VALUES(?, 'pending')",
-                        (p["puuid"],))
                 stored += 1
                 if stored % 50 == 0:
                     conn.commit()
-                    rate = (stored - start_stored) / max(time.monotonic() - t0, 1e-9)
-                    _, pend, _ = _counts(conn)
-                    print(f"  {stored}/{TARGET} matches | {pend} pending | {rate:.1f}/s")
+                    rate = (stored - start) / max(time.monotonic() - t0, 1e-9)
+                    print(f"  {stored}/{TARGET} matches | on {tier} | {rate:.2f}/s")
                 if stored >= TARGET:
                     break
             conn.execute("UPDATE players SET status='done' WHERE puuid=?", (puuid,))
@@ -181,13 +218,19 @@ def crawl():
 def status():
     conn = sqlite3.connect(ingest.DB)
     init_crawl_db(conn)
-    fetched, pending, done = _counts(conn)
+    fetched = conn.execute("SELECT COUNT(*) FROM seen_matches WHERE fetched=1").fetchone()[0]
     parts = conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
+    print(f"matches fetched: {fetched}   participant rows: {parts}\n")
+    print(f"{'tier':<14}{'done':>8}{'pending':>9}")
+    rows = conn.execute(
+        "SELECT COALESCE(tier,'(none)'), "
+        "SUM(status='done'), SUM(status='pending') FROM players GROUP BY tier "
+        "ORDER BY SUM(status='done') DESC").fetchall()
+    for tier, done, pend in rows:
+        print(f"{tier:<14}{done or 0:>8}{pend or 0:>9}")
     conn.close()
-    print(f"matches fetched: {fetched}")
-    print(f"participant rows: {parts}")
-    print(f"players: {done} done, {pending} pending")
 
 
 if __name__ == "__main__":
-    (status if len(sys.argv) > 1 and sys.argv[1] == "status" else crawl)()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "crawl"
+    {"status": status, "seed": seed}.get(cmd, crawl)()

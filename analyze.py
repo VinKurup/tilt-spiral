@@ -111,11 +111,28 @@ def _tier_map(conn):
         return {}
 
 
+def _seed_puuids(conn):
+    """Only players whose full recent history we actually crawled (seeds marked
+    'done'), so session reconstruction is valid. Players that merely appear as
+    opponents have scattered, gap-filled histories that would fake sessions.
+    Falls back to all players if there is no crawl-state table."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_participants_puuid ON participants(puuid)")
+    try:
+        rows = conn.execute(
+            "SELECT p.puuid FROM players p JOIN "
+            "(SELECT puuid, COUNT(*) c FROM participants WHERE queue_id=420 "
+            " GROUP BY puuid) g ON g.puuid=p.puuid "
+            "WHERE p.status='done' AND g.c>=?", (MIN_GAMES,)).fetchall()
+        return [r[0] for r in rows]
+    except sqlite3.OperationalError:
+        return [r[0] for r in conn.execute(
+            "SELECT puuid FROM participants WHERE queue_id=420 "
+            "GROUP BY puuid HAVING COUNT(*)>=?", (MIN_GAMES,)).fetchall()]
+
+
 def run(conn):
     tier_of = _tier_map(conn)
-    puuids = [r[0] for r in conn.execute(
-        "SELECT puuid FROM participants WHERE queue_id=420 "
-        "GROUP BY puuid HAVING COUNT(*)>=?", (MIN_GAMES,)).fetchall()]
+    puuids = _seed_puuids(conn)
 
     agg = {b: {m: [] for m in METRICS} for b in BUCKETS}
     wins = {b: [] for b in BUCKETS}

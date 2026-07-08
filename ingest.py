@@ -75,6 +75,7 @@ def init_db():
             queue_id INT, win INT, kills INT, deaths INT, assists INT,
             cs INT, damage INT, duration_s INT, game_start INT,
             PRIMARY KEY(match_id, puuid))""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_participants_puuid ON participants(puuid)")
 
 
 _PART_SQL = "INSERT OR REPLACE INTO participants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"

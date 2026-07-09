@@ -61,7 +61,10 @@ rate limits. Non-commercial, personal project.
 - [x] Phase 1: rate-limited resumable crawler, ladder seeding, dedup (crawl.py)
 - [x] Phase 2: session reconstruction and baseline-relative analysis
       (analyze.py), per-player trait + behavior tests (traits.py)
-- [ ] Phase 3: deployed lookup service (Postgres, hosted)
+- [~] Phase 3: lookup service — crawl-on-demand Go service built on
+      [gotaskqueue](https://github.com/VinKurup/gotaskqueue), serving
+      behavioral profiles ([observatory/](observatory/)). Hosting + Postgres
+      still to come.
 - [x] Phase 4: writeup of method and findings — drafted, see
       [WRITEUP.md](WRITEUP.md). Short version: no performance tilt at any
       level of aggregation, but loss-chasing behavior is real and strong.

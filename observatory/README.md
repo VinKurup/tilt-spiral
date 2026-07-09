@@ -1,0 +1,48 @@
+# Observatory
+
+Phase 3 of tilt-spiral: a Go service that crawls players on demand and serves
+their behavioral profile — the metrics the study validated (requeue delta,
+quit asymmetry, the myth-check winrate), percentile-ranked against the study
+population. Performance-tilt stats are deliberately absent: the study found
+them null.
+
+Job management is [gotaskqueue](https://github.com/VinKurup/gotaskqueue)
+(retries, backoff, dead-letter queue, status). Rate limiting is not the
+queue's job: a dual sliding window in the Riot client enforces the dev-key
+limits (20 req/s and 100 req/2min) across all workers, with 429 Retry-After
+as the backstop. The crawl handler is idempotent, so a retried or redelivered
+task skips what's already stored.
+
+It reads and writes the **same SQLite schema** as the Python pipeline, so
+`analyze.py` / `traits.py` / `figures.py` keep working against data this
+service crawls. Looked-up players are marked `status='lookup'`, never
+`'done'`, so self-selected lookups can't leak into the study population.
+
+## Run
+
+```sh
+RIOT_API_KEY=... go run .          # serves :8080 against ../tilt.db
+go test ./...                      # metric port is cross-checked vs Python
+```
+
+Config (env): `RIOT_REGION` (americas), `TILT_DB` (../tilt.db), `ADDR`
+(:8080), `WORKERS` (2), `QUEUE` (memory | redis), `REDIS_ADDR`.
+`QUEUE=memory` is single-process and ephemeral; `QUEUE=redis` gives
+at-least-once delivery and crash recovery via gotaskqueue's Redis backend.
+
+## API
+
+| | |
+|---|---|
+| `POST /api/lookup` `{"riotId":"Name#TAG"}` | enqueue a crawl of the player's last 100 ranked games → `{taskId}` |
+| `GET /api/tasks/{id}` | queue status + crawl progress |
+| `GET /api/profile?riotId=Name%23TAG` | behavioral profile + chase percentile vs the study's 345 players |
+| `GET /api/stats` | queue stats + db counts |
+| `GET /healthz` | liveness |
+
+## Verification
+
+`session_test.go` covers the session/metric logic (gap edge cases, quit-rate
+censoring, streak tagging). The port is additionally cross-checked against
+the Python implementation: both produce identical values (to 6 decimals) for
+the same player on the real database.

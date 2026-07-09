@@ -22,6 +22,17 @@ type Store struct {
 	popMu   sync.Mutex
 	popVals []float64 // cached population requeue deltas
 	popAt   time.Time
+
+	habitsMu  sync.Mutex
+	habitsPop *HabitsPop // cached population habit distributions
+	habitsAt  time.Time
+}
+
+// HabitsPop holds the study players' habit values for percentile ranking.
+type HabitsPop struct {
+	OffRoleShare []float64
+	DebutShare   []float64
+	Breadth      []float64
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -123,11 +134,11 @@ func (s *Store) SaveMatch(m *Match) error {
 }
 
 // LoadGames returns a player's ranked games ordered by start time, filtered
-// the same way the study filters (queue 420, >= 5 minutes).
+// the same way the study filters (queue 420, >= 5 minutes, known position).
 func (s *Store) LoadGames(puuid string) ([]Game, error) {
 	rows, err := s.db.Query(
-		`SELECT win, game_start, duration_s FROM participants
-		 WHERE puuid=? AND queue_id=420 AND duration_s>=300
+		`SELECT win, game_start, duration_s, champion, position FROM participants
+		 WHERE puuid=? AND queue_id=420 AND duration_s>=300 AND position!=''
 		 ORDER BY game_start`, puuid)
 	if err != nil {
 		return nil, err
@@ -137,13 +148,36 @@ func (s *Store) LoadGames(puuid string) ([]Game, error) {
 	for rows.Next() {
 		var w int
 		var g Game
-		if err := rows.Scan(&w, &g.StartMs, &g.DurS); err != nil {
+		if err := rows.Scan(&w, &g.StartMs, &g.DurS, &g.Champ, &g.Role); err != nil {
 			return nil, err
 		}
 		g.Win = w == 1
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// seedPuuids returns the study population: fully crawled players with enough
+// ranked games, the same selection analyze.py makes.
+func (s *Store) seedPuuids() ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT p.puuid FROM players p JOIN
+		 (SELECT puuid, COUNT(*) c FROM participants WHERE queue_id=420
+		  GROUP BY puuid) g ON g.puuid=p.puuid
+		 WHERE p.status='done' AND g.c>=?`, minGamesForPopulation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var puuids []string
+	for rows.Next() {
+		var pu string
+		if err := rows.Scan(&pu); err != nil {
+			return nil, err
+		}
+		puuids = append(puuids, pu)
+	}
+	return puuids, rows.Err()
 }
 
 // PopulationRequeueDeltas returns the study players' requeue deltas for
@@ -154,28 +188,10 @@ func (s *Store) PopulationRequeueDeltas() ([]float64, error) {
 	if s.popVals != nil && time.Since(s.popAt) < 10*time.Minute {
 		return s.popVals, nil
 	}
-	rows, err := s.db.Query(
-		`SELECT p.puuid FROM players p JOIN
-		 (SELECT puuid, COUNT(*) c FROM participants WHERE queue_id=420
-		  GROUP BY puuid) g ON g.puuid=p.puuid
-		 WHERE p.status='done' AND g.c>=?`, minGamesForPopulation)
+	puuids, err := s.seedPuuids()
 	if err != nil {
 		return nil, err
 	}
-	var puuids []string
-	for rows.Next() {
-		var pu string
-		if err := rows.Scan(&pu); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		puuids = append(puuids, pu)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
 	var vals []float64
 	for _, pu := range puuids {
 		games, err := s.LoadGames(pu)
@@ -189,6 +205,36 @@ func (s *Store) PopulationRequeueDeltas() ([]float64, error) {
 	}
 	s.popVals, s.popAt = vals, time.Now()
 	return vals, nil
+}
+
+// PopulationHabits returns the study players' habit distributions for
+// percentile ranking, cached the same way as the requeue deltas.
+func (s *Store) PopulationHabits() (*HabitsPop, error) {
+	s.habitsMu.Lock()
+	defer s.habitsMu.Unlock()
+	if s.habitsPop != nil && time.Since(s.habitsAt) < 10*time.Minute {
+		return s.habitsPop, nil
+	}
+	puuids, err := s.seedPuuids()
+	if err != nil {
+		return nil, err
+	}
+	pop := &HabitsPop{}
+	for _, pu := range puuids {
+		games, err := s.LoadGames(pu)
+		if err != nil {
+			return nil, err
+		}
+		if len(games) == 0 {
+			continue
+		}
+		h := BuildHabits(games)
+		pop.OffRoleShare = append(pop.OffRoleShare, h.OffRoleShare)
+		pop.DebutShare = append(pop.DebutShare, h.DebutShare)
+		pop.Breadth = append(pop.Breadth, h.EffectiveChamps)
+	}
+	s.habitsPop, s.habitsAt = pop, time.Now()
+	return pop, nil
 }
 
 func (s *Store) Counts() (matches, players int, err error) {

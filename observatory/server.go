@@ -193,6 +193,19 @@ func (s *Server) apiProfile(w http.ResponseWriter, r *http.Request) {
 			resp["populationN"] = len(pop)
 		}
 	}
+	if len(games) > 0 {
+		habits := BuildHabits(games)
+		resp["habits"] = habits
+		pop, err := s.store.PopulationHabits()
+		if err == nil && len(pop.Breadth) > 0 {
+			resp["habitPercentiles"] = map[string]any{
+				"offRoleShare":    percentileBelow(pop.OffRoleShare, habits.OffRoleShare),
+				"debutShare":      percentileBelow(pop.DebutShare, habits.DebutShare),
+				"effectiveChamps": percentileBelow(pop.Breadth, habits.EffectiveChamps),
+				"populationN":     len(pop.Breadth),
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

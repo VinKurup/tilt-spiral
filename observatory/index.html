@@ -52,6 +52,10 @@
   .card .label { font-size: 13px; color: var(--muted); }
   .card .value { font-size: 24px; font-weight: 650; }
   .card .detail { font-size: 13px; color: var(--ink2); }
+  .sect {
+    font-size: 13px; font-weight: 650; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em; margin: 24px 0 10px;
+  }
   .foot { color: var(--muted); font-size: 13px; margin-top: 24px; }
   .foot a { color: var(--accent); }
   @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
@@ -76,6 +80,32 @@
       <div class="value" id="pct">–</div>
       <div class="detail" id="pctDetail"></div>
     </div>
+    <div class="sect" id="leaksHead" style="display:none">measured leaks — habits with a
+    winrate price across the 345 study players</div>
+    <div class="grid" id="leaks" style="display:none">
+      <div class="card">
+        <div class="label">effective champion pool</div>
+        <div class="value" id="pool">–</div>
+        <div class="detail" id="poolDetail"></div>
+      </div>
+      <div class="card">
+        <div class="label">first-time champions in ranked</div>
+        <div class="value" id="debut">–</div>
+        <div class="detail" id="debutDetail"></div>
+      </div>
+      <div class="card">
+        <div class="label" id="offLabel">games off-role</div>
+        <div class="value" id="off">–</div>
+        <div class="detail" id="offDetail"></div>
+      </div>
+      <div class="card">
+        <div class="label">comfort picks (10+ prior games)</div>
+        <div class="value" id="comfort">–</div>
+        <div class="detail" id="comfortDetail"></div>
+      </div>
+    </div>
+
+    <div class="sect">queue behavior</div>
     <div class="grid">
       <div class="card">
         <div class="label">requeue after a loss</div>
@@ -143,10 +173,44 @@ function render(d) {
     ? `your overall: ${pct(p.winrate)} · ${p.gamesAfterL2Plus} games is a small sample — ` +
       `across 345 players these rates match`
     : "no 2+ loss streaks in sample";
+  if (d.habits) renderHabits(d.habits, d.habitPercentiles);
   $("games").textContent = p.rankedGames;
   $("sessions").textContent = `ranked games across ${p.sessions} sessions`;
   $("result").style.display = "block";
   status("");
+}
+
+function renderHabits(h, hp) {
+  const vs = (key, phrase) => hp && hp[key] !== undefined
+    ? ` · ${phrase} ${pct(hp[key])} of ${hp.populationN} study players` : "";
+  $("pool").textContent = h.effectiveChamps.toFixed(1);
+  $("poolDetail").textContent =
+    `${h.distinctChamps} champions in sample${vs("effectiveChamps", "broader than")} · ` +
+    `Diamond+ median ≈ 6`;
+  $("debut").textContent = pct(h.debutShare);
+  $("debutDetail").textContent =
+    `${h.debuts} debuts` +
+    (h.debuts && h.debutShare < 1
+      ? `: ${pct(h.winrateDebut)} wr vs ${pct(h.winrateRepeat)} on repeats` : "") +
+    `${vs("debutShare", "more than")} · debuts cost −4.1pp across the study`;
+  $("offLabel").textContent = `games off ${h.modalRole.toLowerCase()}`;
+  $("off").textContent = pct(h.offRoleShare);
+  $("offDetail").textContent = h.offRoleGames
+    ? `on-role ${pct(h.winrateOnRole)} · off-role ${pct(h.winrateOffRole)}` +
+      `${vs("offRoleShare", "more off-role than")} · study cost −4.0pp`
+    : "never — single-role sample";
+  if (h.comfortGames) {
+    $("comfort").textContent = pct(h.winrateComfort);
+    $("comfortDetail").textContent =
+      `winrate over ${h.comfortGames} comfort games · unfamiliar (≤2 prior): ` +
+      `${pct(h.winrateUnfamiliar)} · comfort is worth +4.3pp across the study`;
+  } else {
+    $("comfort").textContent = "none";
+    $("comfortDetail").textContent =
+      "no champion reaches the tier where the study's +4.3pp comfort effect lives";
+  }
+  $("leaksHead").style.display = "block";
+  $("leaks").style.display = "grid";
 }
 
 async function poll(taskId) {

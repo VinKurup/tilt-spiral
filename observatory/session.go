@@ -14,6 +14,8 @@ type Game struct {
 	Win     bool
 	StartMs int64
 	DurS    int64
+	Champ   string
+	Role    string
 }
 
 func (g Game) endMs() int64 { return g.StartMs + g.DurS*1000 }

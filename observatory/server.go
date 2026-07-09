@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/VinKurup/gotaskqueue"
 )
+
+//go:embed index.html
+var indexHTML []byte
 
 const taskCrawlPlayer = "crawl-player"
 
@@ -107,6 +111,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.apiStats)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
 	})
 	return mux
 }

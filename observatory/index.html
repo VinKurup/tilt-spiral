@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tilt Spiral — your queue behavior</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --card: #ffffff; --ink: #0b0b0b; --ink2: #52514e;
+    --muted: #898781; --line: #e1e0d9; --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #0d0d0d; --card: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7;
+      --muted: #898781; --line: #2c2c2a; --accent: #3987e5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 48px 16px;
+  }
+  main { width: 100%; max-width: 640px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--ink2); margin: 0 0 28px; font-size: 14px; }
+  form { display: flex; gap: 8px; margin-bottom: 24px; }
+  input {
+    flex: 1; padding: 10px 12px; font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  }
+  button {
+    padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { color: var(--ink2); font-size: 14px; min-height: 20px; }
+  .error { color: #d03b3b; }
+  #result { display: none; }
+  .hero {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 24px; margin: 20px 0 12px;
+  }
+  .hero .label { font-size: 13px; color: var(--muted); }
+  .hero .value { font-size: 40px; font-weight: 650; margin: 2px 0; }
+  .hero .detail { font-size: 14px; color: var(--ink2); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .card .label { font-size: 13px; color: var(--muted); }
+  .card .value { font-size: 24px; font-weight: 650; }
+  .card .detail { font-size: 13px; color: var(--ink2); }
+  .foot { color: var(--muted); font-size: 13px; margin-top: 24px; }
+  .foot a { color: var(--accent); }
+  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tilt Spiral</h1>
+  <p class="sub">Not your performance — your <em>behavior</em>. Performance tilt was
+  tested across 345 ladder players and found null; what's real is how the queue
+  pulls you back after a loss. This is a mirror, not a stop sign.</p>
+
+  <form id="form">
+    <input id="riotId" placeholder="Name#TAG" autocomplete="off" required>
+    <button id="go" type="submit">Look up</button>
+  </form>
+  <div class="status" id="status"></div>
+
+  <section id="result">
+    <div class="hero">
+      <div class="label">loss-chasing percentile</div>
+      <div class="value" id="pct">–</div>
+      <div class="detail" id="pctDetail"></div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="label">requeue after a loss</div>
+        <div class="value" id="reqLoss">–</div>
+        <div class="detail" id="reqWin"></div>
+      </div>
+      <div class="card">
+        <div class="label">"one more game"</div>
+        <div class="value" id="quitLoss">–</div>
+        <div class="detail" id="quitWin"></div>
+      </div>
+      <div class="card">
+        <div class="label">myth check: next game after 2+ losses</div>
+        <div class="value" id="wrL2">–</div>
+        <div class="detail" id="wrL2Detail"></div>
+      </div>
+      <div class="card">
+        <div class="label">sample</div>
+        <div class="value" id="games">–</div>
+        <div class="detail" id="sessions"></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">Built on the <a href="https://github.com/VinKurup/tilt-spiral">tilt-spiral
+  study</a>. Ranked solo queue only. Tilt Spiral isn't endorsed by Riot Games.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = (msg, err) => {
+  $("status").textContent = msg;
+  $("status").className = "status" + (err ? " error" : "");
+};
+const min = v => `${Math.abs(v).toFixed(1)} min`;
+const pct = v => `${Math.round(v * 100)}%`;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok && r.status !== 404) throw new Error(body.error || `HTTP ${r.status}`);
+  return { ok: r.ok, status: r.status, body };
+}
+
+function render(d) {
+  const p = d.profile;
+  if (!p.requeueSamples) {
+    status("Not enough within-session ranked games to build a profile yet.", true);
+    return;
+  }
+  if (d.chasePercentile !== undefined) {
+    $("pct").textContent = pct(d.chasePercentile);
+    $("pctDetail").textContent =
+      `you requeue-after-loss harder than ${pct(d.chasePercentile)} of ` +
+      `${d.populationN} study players`;
+  }
+  $("reqLoss").textContent = min(p.requeueAfterLossMin);
+  $("reqWin").textContent =
+    `after a win: ${min(p.requeueAfterWinMin)} — delta ${p.requeueDeltaMin.toFixed(1)} min`;
+  $("quitLoss").textContent = pct(1 - p.quitAfterLoss);
+  $("quitWin").textContent =
+    `chance you keep playing after a loss · after a win: ${pct(1 - p.quitAfterWin)}`;
+  $("wrL2").textContent = p.gamesAfterL2Plus ? pct(p.winrateAfterL2Plus) : "n/a";
+  $("wrL2Detail").textContent = p.gamesAfterL2Plus
+    ? `your overall: ${pct(p.winrate)} · ${p.gamesAfterL2Plus} games is a small sample — ` +
+      `across 345 players these rates match`
+    : "no 2+ loss streaks in sample";
+  $("games").textContent = p.rankedGames;
+  $("sessions").textContent = `ranked games across ${p.sessions} sessions`;
+  $("result").style.display = "block";
+  status("");
+}
+
+async function poll(taskId) {
+  for (;;) {
+    const { body } = await api(`/api/tasks/${taskId}`);
+    if (body.status === "completed") return;
+    if (body.status === "failed" || body.status === "dead" || body.status === "cancelled")
+      throw new Error(`crawl ${body.status} — try again`);
+    const pr = body.progress;
+    status(pr && pr.total
+      ? `Crawling your match history… ${pr.done}/${pr.total}`
+      : "Crawling your match history…");
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const riotId = $("riotId").value.trim();
+  $("go").disabled = true;
+  $("result").style.display = "none";
+  try {
+    const prof = await api(`/api/profile?riotId=${encodeURIComponent(riotId)}`);
+    if (prof.ok) { render(prof.body); }
+    if (!prof.ok) {
+      status("Looking you up…");
+      const { body } = await api("/api/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ riotId }),
+      });
+      await poll(body.taskId);
+      const fresh = await api(`/api/profile?riotId=${encodeURIComponent(riotId)}`);
+      if (!fresh.ok) throw new Error(fresh.body.error || "profile unavailable");
+      render(fresh.body);
+    }
+  } catch (err) {
+    status(err.message, true);
+  } finally {
+    $("go").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

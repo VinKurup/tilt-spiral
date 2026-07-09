@@ -25,6 +25,15 @@ RIOT_API_KEY=... go run .          # serves :8080 against ../tilt.db
 go test ./...                      # metric port is cross-checked vs Python
 ```
 
+Open http://localhost:8080 — a single embedded page (go:embed, one static
+binary) takes a Riot ID, shows live crawl progress, and renders the profile.
+
+For the production shape (Redis-backed queue, data on a volume):
+
+```sh
+RIOT_API_KEY=... docker compose up --build
+```
+
 Config (env): `RIOT_REGION` (americas), `TILT_DB` (../tilt.db), `ADDR`
 (:8080), `WORKERS` (2), `QUEUE` (memory | redis), `REDIS_ADDR`.
 `QUEUE=memory` is single-process and ephemeral; `QUEUE=redis` gives

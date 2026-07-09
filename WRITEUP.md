@@ -69,8 +69,9 @@ show up where everyone thinks it does"*
 - Winrate by streak state: 51–54% everywhere, including after 3+ losses.
 - Per-player: sd of observed slopes 0.349 (deaths) vs 0.342 under the null,
   p = 0.32; tilt-significant players 14 observed vs 17.2 expected by chance.
-  CS/min: same story. TODO: figure 3 (observed slope distribution overlaid on
-  permutation null — this is the money figure).
+  CS/min: same story.
+
+  ![Per-player slopes vs permutation null](figures/fig3_slopes.png)
 - What the null rules out and what it doesn't: bounded average effect
   (< ~0.2 deaths/game), no detectable tilted minority *on these metrics*.
 
@@ -78,7 +79,8 @@ show up where everyone thinks it does"*
 
 - Requeue: per-player median gap after loss minus after win = −0.69 min;
   241 faster vs 101 slower (n = 342, sign test p < 0.001).
-  TODO: figure 4 (distribution of per-player requeue deltas).
+
+  ![Per-player requeue deltas](figures/fig4_requeue.png)
 - Session ending: P(quit after loss) = 40.6% vs P(quit after win) = 44.8%;
   per-player paired diff p = 0.006. "One more game" after a loss is real.
 - The pairing matters: every comparison is the same player against themselves.
@@ -108,10 +110,16 @@ show up where everyone thinks it does"*
   Iron–Silver in the sample).
 - Baseline includes streak games (attenuates large effects slightly; with
   effects this close to zero it doesn't change conclusions).
-- Session gap of 30 min is a choice. TODO: robustness check at 15 / 60 min.
+- Session gap of 30 min is a choice, so everything was rerun at 15 and 60 min.
+  The performance null and the requeue effect hold at both (requeue delta
+  −0.41 min at 15, −0.78 at 60, both p < 0.001). The quit-rate gap holds at
+  15 min (p < 0.001) but attenuates at 60 (median per-player diff −0.027,
+  p = 0.066) — unsurprising, since an hour-long break barely counts as
+  "ending the session," but stated for completeness.
 
 ## 8. Reproduce it
 
 - `crawl.py` (rate-limited, resumable, rank-stratified) → `tilt.db` →
-  `analyze.py` (population) / `traits.py` (per-player + behavior, seeded).
+  `analyze.py` (population) / `traits.py` (per-player + behavior, seeded) /
+  `figures.py` (regenerates every figure from the db).
 - TODO: exact commands, dataset row counts, runtime.

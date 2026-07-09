@@ -2,8 +2,10 @@
 """
 Figures for WRITEUP.md, computed straight from tilt.db.
 
-  fig3_slopes.png   per-player streak-response slopes vs their permutation null
-  fig4_requeue.png  per-player requeue-time delta (after loss - after win)
+  fig1_population.png  population deviation vs streak state, with SEs
+  fig2_tiers.png       deaths deviation, tier x streak heatmap
+  fig3_slopes.png      per-player streak-response slopes vs their permutation null
+  fig4_requeue.png     per-player requeue-time delta (after loss - after win)
 
   python figures.py            # writes into figures/
 """
@@ -82,6 +84,63 @@ def collect_requeue(conn, puuids):
     return diffs
 
 
+def fig_population(agg):
+    from statistics import mean as _mean, stdev as _stdev
+    fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
+    for ax, m, label in zip(axes, ("deaths", "cs_min"),
+                            ("deaths", "CS per minute")):
+        xs = range(len(analyze.BUCKETS))
+        means = [_mean(agg[b][m]) for b in analyze.BUCKETS]
+        ses = [_stdev(agg[b][m]) / (len(agg[b][m]) ** 0.5) for b in analyze.BUCKETS]
+        ax.axhline(0, color=BASELINE, linewidth=1, zorder=1)
+        ax.errorbar(xs, means, yerr=ses, fmt="o", color=BLUE, markersize=8,
+                    markeredgecolor=SURFACE, markeredgewidth=2,
+                    elinewidth=2, capsize=0, zorder=3)
+        ax.set_xticks(list(xs), analyze.BUCKETS)
+        ax.set_title(label, fontsize=11, color=SECONDARY, loc="left")
+        ax.set_xlabel("streak carried into the game")
+        ax.grid(visible=False, axis="x")
+        ax.grid(visible=True, axis="y")
+    axes[0].set_ylabel("deviation from own baseline")
+    fig.suptitle("Flat everywhere: performance vs the streak entering the game "
+                 "(32k games, mean ± SE)",
+                 fontsize=12.5, fontweight="semibold", x=0.01, ha="left")
+    fig.text(0.01, 0.885, "note the scale: a typical game has ~5.9 deaths and "
+             "~6.0 CS/min — every deviation here is hundredths",
+             fontsize=9.5, color=SECONDARY)
+    fig.tight_layout(rect=(0, 0, 1, 0.87))
+    fig.savefig(OUT / "fig1_population.png", dpi=200)
+
+
+def fig_tiers(tier_deaths, tier_players, min_players=5):
+    from statistics import mean as _mean
+    from matplotlib.colors import LinearSegmentedColormap
+    tiers = [t for t in analyze.TIER_ORDER if tier_players.get(t, 0) >= min_players]
+    grid = [[_mean(tier_deaths[t][b]) if tier_deaths[t][b] else 0.0
+             for b in analyze.BUCKETS] for t in tiers]
+    lim = max(abs(v) for row in grid for v in row) * 1.05
+    cmap = LinearSegmentedColormap.from_list("div", [BLUE, "#f0efec", "#e34948"])
+    fig, ax = plt.subplots(figsize=(7.6, 0.55 * len(tiers) + 1.6))
+    ax.imshow(grid, cmap=cmap, vmin=-lim, vmax=lim, aspect="auto")
+    ax.set_xticks(range(len(analyze.BUCKETS)), analyze.BUCKETS)
+    ax.set_yticks(range(len(tiers)), [t.title() for t in tiers])
+    for i, row in enumerate(grid):
+        for j, v in enumerate(row):
+            ax.text(j, i, f"{v:+.2f}", ha="center", va="center", fontsize=8.5,
+                    color=SURFACE if abs(v) > 0.7 * lim else INK)
+    ax.grid(visible=False)
+    ax.tick_params(length=0)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    fig.suptitle("No tilt gradient by rank: deaths vs own baseline, by tier and streak",
+                 fontsize=12.5, fontweight="semibold", x=0.01, ha="left")
+    fig.text(0.01, 0.86, "red = more deaths than that player's average, "
+             "blue = fewer; all values are noise-sized", fontsize=9.5,
+             color=SECONDARY)
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
+    fig.savefig(OUT / "fig2_tiers.png", dpi=200)
+
+
 def fig_slopes(obs, null):
     fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
     for ax, m in zip(axes, traits.TILT_SIGN):
@@ -139,6 +198,9 @@ if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     conn = sqlite3.connect(ingest.DB)
     puuids = analyze._seed_puuids(conn)
+    agg, _wins, tier_deaths, tier_players = analyze.run(conn)
+    fig_population(agg)
+    fig_tiers(tier_deaths, tier_players)
     obs, null = collect_slopes(conn, puuids)
     fig_slopes(obs, null)
     diffs = collect_requeue(conn, puuids)

@@ -58,10 +58,13 @@ rate limits. Non-commercial, personal project.
 ## Status
 
 - [x] Phase 0: vertical slice, Riot ID to matches to SQLite (ingest.py)
-- [ ] Phase 1: rate-limited resumable crawler, ladder seeding, dedup
-- [ ] Phase 2: session reconstruction and baseline-relative analysis
+- [x] Phase 1: rate-limited resumable crawler, ladder seeding, dedup (crawl.py)
+- [x] Phase 2: session reconstruction and baseline-relative analysis
+      (analyze.py), per-player trait + behavior tests (traits.py)
 - [ ] Phase 3: deployed lookup service (Postgres, hosted)
-- [ ] Phase 4: writeup of method and findings
+- [x] Phase 4: writeup of method and findings — drafted, see
+      [WRITEUP.md](WRITEUP.md). Short version: no performance tilt at any
+      level of aggregation, but loss-chasing behavior is real and strong.
 
 ## Running the slice
 

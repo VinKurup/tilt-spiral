@@ -156,6 +156,7 @@ def run(conn):
 
     _print_report(agg, wins, n_players, len(puuids))
     _print_by_tier(tier_deaths, tier_players)
+    return agg, wins, tier_deaths, tier_players
 
 
 def _print_by_tier(tier_deaths, tier_players, min_players=5):

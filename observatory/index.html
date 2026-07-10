@@ -192,28 +192,28 @@ function renderHabits(h, hp) {
   $("pool").textContent = h.effectiveChamps.toFixed(1);
   $("poolDetail").textContent =
     `${h.distinctChamps} champions in sample${vs("effectiveChamps", "broader than")} · ` +
-    `Diamond+ median ≈ 6`;
+    `Diamond+ median ≈ 7`;
   $("debut").textContent = pct(h.debutShare);
   $("debutDetail").textContent =
     `${h.debuts} debuts` +
     (h.debuts && h.debutShare < 1
       ? `: ${pct(h.winrateDebut)} wr vs ${pct(h.winrateRepeat)} on repeats` : "") +
-    `${vs("debutShare", "more than")} · debuts cost −4.1pp across the study`;
+    `${vs("debutShare", "more than")} · debuts cost −5.0pp across the study`;
   $("offLabel").textContent = `games off ${h.modalRole.toLowerCase()}`;
   $("off").textContent = pct(h.offRoleShare);
   $("offDetail").textContent = h.offRoleGames
     ? `on-role ${pct(h.winrateOnRole)} · off-role ${pct(h.winrateOffRole)}` +
-      `${vs("offRoleShare", "more off-role than")} · study cost −4.0pp`
+      `${vs("offRoleShare", "more off-role than")} · study cost −4.1pp`
     : "never — single-role sample";
   if (h.comfortGames) {
     $("comfort").textContent = pct(h.winrateComfort);
     $("comfortDetail").textContent =
       `winrate over ${h.comfortGames} comfort games · unfamiliar (≤2 prior): ` +
-      `${pct(h.winrateUnfamiliar)} · comfort is worth +4.3pp across the study`;
+      `${pct(h.winrateUnfamiliar)} · comfort is worth +4.0pp across the study`;
   } else {
     $("comfort").textContent = "none";
     $("comfortDetail").textContent =
-      "no champion reaches the tier where the study's +4.3pp comfort effect lives";
+      "no champion reaches the tier where the study's +4.0pp comfort effect lives";
   }
   $("leaksHead").style.display = "block";
   $("leaks").style.display = "grid";

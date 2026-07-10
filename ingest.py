@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DB = HERE / "tilt.db"
 
 
 def _load_env():
@@ -34,6 +33,9 @@ def _load_env():
 
 
 _load_env()
+# TILT_DB lets the containerized crawler point at the shared volume; the
+# default keeps every local workflow unchanged.
+DB = Path(os.environ.get("TILT_DB", HERE / "tilt.db"))
 KEY = os.environ.get("RIOT_API_KEY")
 REGION = os.environ.get("RIOT_REGION", "americas")
 BASE = f"https://{REGION}.api.riotgames.com"

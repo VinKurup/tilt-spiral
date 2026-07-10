@@ -1,0 +1,9 @@
+# The Phase 1 crawler, containerized so the observatory box can run the
+# expansion crawl itself (compose profile "crawl"). Only needs requests —
+# matplotlib in requirements.txt is for figures.py, not the crawler.
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN pip install --no-cache-dir requests
+COPY ingest.py crawl.py ./
+ENTRYPOINT ["python", "crawl.py"]

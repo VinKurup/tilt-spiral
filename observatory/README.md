@@ -34,10 +34,25 @@ For the production shape (Redis-backed queue, data on a volume):
 RIOT_API_KEY=... docker compose up --build
 ```
 
-Config (env): `RIOT_REGION` (americas), `TILT_DB` (../tilt.db), `ADDR`
-(:8080), `WORKERS` (2), `QUEUE` (memory | redis), `REDIS_ADDR`.
+Config (env): `RIOT_REGION` (americas), `RIOT_PLATFORM` (na1), `TILT_DB`
+(../tilt.db), `ADDR` (:8080), `WORKERS` (2), `QUEUE` (memory | redis),
+`REDIS_ADDR`, `PANEL_INTERVAL_H` (0 = off; 168 sweeps the longitudinal
+panel weekly — rank snapshot + match top-up for every done player).
 `QUEUE=memory` is single-process and ephemeral; `QUEUE=redis` gives
 at-least-once delivery and crash recovery via gotaskqueue's Redis backend.
+
+The compose file also carries the Phase 1 expansion crawler
+(`Dockerfile.crawler` at the repo root) behind a profile, sharing the same
+`./data` volume, so the deploy box can grow the dataset itself:
+
+```sh
+docker compose --profile crawl up -d --build crawler
+docker compose logs -f crawler
+```
+
+It exits 0 at `CRAWL_TARGET_MATCHES` and crashes on a dev-key expiry (403);
+put the fresh key in `.env` and re-run the `up` to recreate it. Run the
+crawler and the panel at different times — they share the key's rate budget.
 
 ## API
 

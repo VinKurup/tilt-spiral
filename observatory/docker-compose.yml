@@ -9,6 +9,8 @@ services:
     environment:
       RIOT_API_KEY: ${RIOT_API_KEY}
       RIOT_REGION: ${RIOT_REGION:-americas}
+      RIOT_PLATFORM: ${RIOT_PLATFORM:-na1}
+      PANEL_INTERVAL_H: ${PANEL_INTERVAL_H:-0}
       TILT_DB: /data/tilt.db
       QUEUE: redis
       REDIS_ADDR: redis:6379
@@ -25,6 +27,28 @@ services:
     volumes:
       - redis-data:/data
     restart: unless-stopped
+
+  # The expansion crawler. Opt-in via profile so a plain `up` never fires it:
+  #   docker compose --profile crawl up -d --build crawler
+  # Exits 0 when the target is reached; a dev-key expiry (403) crashes it and
+  # on-failure backs off — paste a fresh key into .env and re-run the command
+  # above to recreate it with the new environment.
+  crawler:
+    build:
+      context: ..
+      dockerfile: Dockerfile.crawler
+    profiles: ["crawl"]
+    environment:
+      RIOT_API_KEY: ${RIOT_API_KEY}
+      RIOT_REGION: ${RIOT_REGION:-americas}
+      RIOT_PLATFORM: ${RIOT_PLATFORM:-na1}
+      TILT_DB: /data/tilt.db
+      CRAWL_TARGET_MATCHES: ${CRAWL_TARGET_MATCHES:-60000}
+      CRAWL_TIERS: ${CRAWL_TIERS:-GOLD,PLATINUM,EMERALD,DIAMOND,MASTER,CHALLENGER}
+      RIOT_RPS: ${RIOT_RPS:-0.8}
+    volumes:
+      - ./data:/data
+    restart: on-failure
 
 volumes:
   redis-data:

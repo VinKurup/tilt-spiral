@@ -60,6 +60,12 @@ func (s *Store) init() error {
 			match_id TEXT PRIMARY KEY, fetched INT DEFAULT 0)`,
 		`CREATE TABLE IF NOT EXISTS accounts(
 			riot_id TEXT PRIMARY KEY, puuid TEXT)`,
+		// The longitudinal panel: periodic rank snapshots of study players,
+		// so habit changes can be tied to LP trajectories later.
+		`CREATE TABLE IF NOT EXISTS rank_history(
+			puuid TEXT, at INT, tier TEXT, division TEXT, lp INT,
+			wins INT, losses INT,
+			PRIMARY KEY(puuid, at))`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -235,6 +241,44 @@ func (s *Store) PopulationHabits() (*HabitsPop, error) {
 	}
 	s.habitsPop, s.habitsAt = pop, time.Now()
 	return pop, nil
+}
+
+// DonePuuids returns every fully crawled study player: the panel population.
+func (s *Store) DonePuuids() ([]string, error) {
+	rows, err := s.db.Query("SELECT puuid FROM players WHERE status='done'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var pu string
+		if err := rows.Scan(&pu); err != nil {
+			return nil, err
+		}
+		out = append(out, pu)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveRankSnapshot(puuid string, at int64, e *LeagueEntry) error {
+	if e == nil { // unranked this split: record the observation as empty tier
+		_, err := s.db.Exec(
+			"INSERT OR IGNORE INTO rank_history VALUES (?,?,'','',0,0,0)", puuid, at)
+		return err
+	}
+	_, err := s.db.Exec(
+		"INSERT OR IGNORE INTO rank_history VALUES (?,?,?,?,?,?,?)",
+		puuid, at, e.Tier, e.Rank, e.LP, e.Wins, e.Losses)
+	return err
+}
+
+// LatestSnapshotAt returns the most recent panel snapshot time (unix ms),
+// or 0 if the panel has never run.
+func (s *Store) LatestSnapshotAt() (int64, error) {
+	var at sql.NullInt64
+	err := s.db.QueryRow("SELECT MAX(at) FROM rank_history").Scan(&at)
+	return at.Int64, err
 }
 
 func (s *Store) Counts() (matches, players int, err error) {

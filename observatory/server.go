@@ -9,9 +9,11 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/VinKurup/gotaskqueue"
 )
@@ -19,11 +21,21 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
-const taskCrawlPlayer = "crawl-player"
+const (
+	taskCrawlPlayer = "crawl-player"
+	taskPanelPlayer = "panel-player"
+
+	panelMatchCount = 100 // recent ids to list per sweep; existing ones skip
+)
 
 type crawlArgs struct {
 	RiotID string `json:"riotId"`
 	Count  int    `json:"count"` // recent matches to pull, <= 100
+}
+
+type panelArgs struct {
+	Puuid string `json:"puuid"`
+	At    int64  `json:"at"` // sweep timestamp (unix ms), shared by the batch
 }
 
 type progress struct {
@@ -43,6 +55,7 @@ type Server struct {
 func NewServer(store *Store, riot *RiotClient, q gotaskqueue.Queue) *Server {
 	s := &Server{store: store, riot: riot, queue: q, prog: map[string]*progress{}}
 	q.Register(taskCrawlPlayer, s.handleCrawl)
+	q.Register(taskPanelPlayer, s.handlePanel)
 	return s
 }
 
@@ -73,7 +86,16 @@ func (s *Server) handleCrawl(ctx context.Context, t gotaskqueue.Task) error {
 	if err := s.store.MarkLookupPlayer(puuid); err != nil {
 		return err
 	}
-	ids, err := s.riot.MatchIDs(ctx, puuid, args.Count)
+	if err := s.fetchNewMatches(ctx, t.ID, puuid, args.Count); err != nil {
+		return err
+	}
+	return nil
+}
+
+// fetchNewMatches lists a player's recent matches and stores the ones we
+// don't have yet. Idempotent: retries and panel re-sweeps skip stored games.
+func (s *Server) fetchNewMatches(ctx context.Context, taskID, puuid string, count int) error {
+	ids, err := s.riot.MatchIDs(ctx, puuid, count)
 	if err != nil {
 		return err
 	}
@@ -81,7 +103,7 @@ func (s *Server) handleCrawl(ctx context.Context, t gotaskqueue.Task) error {
 		if err := ctx.Err(); err != nil { // cooperative cancellation
 			return err
 		}
-		s.setProgress(t.ID, "fetching", i, len(ids))
+		s.setProgress(taskID, "fetching", i, len(ids))
 		have, err := s.store.HasMatch(id)
 		if err != nil {
 			return err
@@ -97,8 +119,68 @@ func (s *Server) handleCrawl(ctx context.Context, t gotaskqueue.Task) error {
 			return err
 		}
 	}
-	s.setProgress(t.ID, "done", len(ids), len(ids))
+	s.setProgress(taskID, "done", len(ids), len(ids))
 	return nil
+}
+
+// --- panel ------------------------------------------------------------------
+
+// handlePanel is one panel-sweep unit: snapshot the player's current rank,
+// then top up their match history since the last sweep.
+func (s *Server) handlePanel(ctx context.Context, t gotaskqueue.Task) error {
+	var args panelArgs
+	if err := json.Unmarshal(t.Data, &args); err != nil {
+		return fmt.Errorf("bad task data: %w", err)
+	}
+	entry, err := s.riot.SoloQueueEntry(ctx, args.Puuid)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SaveRankSnapshot(args.Puuid, args.At, entry); err != nil {
+		return err
+	}
+	return s.fetchNewMatches(ctx, t.ID, args.Puuid, panelMatchCount)
+}
+
+// StartPanel turns the one-time study crawl into a longitudinal panel: when
+// the newest rank snapshot is older than interval, every done player gets a
+// panel-player task (rank snapshot + match top-up). Enqueueing one task per
+// player lets gotaskqueue's retry/backoff/DLQ apply per player.
+func (s *Server) StartPanel(interval time.Duration) {
+	poll := interval
+	if poll > time.Hour {
+		poll = time.Hour
+	}
+	go func() {
+		for {
+			last, err := s.store.LatestSnapshotAt()
+			if err != nil {
+				log.Printf("panel: latest snapshot: %v", err)
+			} else if time.Since(time.UnixMilli(last)) >= interval {
+				s.enqueuePanelSweep()
+			}
+			time.Sleep(poll)
+		}
+	}()
+}
+
+func (s *Server) enqueuePanelSweep() {
+	puuids, err := s.store.DonePuuids()
+	if err != nil {
+		log.Printf("panel: list players: %v", err)
+		return
+	}
+	at := time.Now().UnixMilli()
+	n := 0
+	for _, pu := range puuids {
+		data, _ := json.Marshal(panelArgs{Puuid: pu, At: at})
+		if _, err := s.queue.Enqueue(taskPanelPlayer, data); err != nil {
+			log.Printf("panel: enqueue %s: %v", pu, err)
+			continue
+		}
+		n++
+	}
+	log.Printf("panel: sweep enqueued for %d players", n)
 }
 
 // --- HTTP ------------------------------------------------------------------

@@ -4,19 +4,23 @@ package main
 // serving behavioral profiles over the study's database.
 //
 // Config (env):
-//   RIOT_API_KEY   required
-//   RIOT_REGION    americas (regional cluster, not platform)
-//   TILT_DB        ../tilt.db
-//   ADDR           :8080
-//   WORKERS        2
-//   QUEUE          memory | redis
-//   REDIS_ADDR     localhost:6379 (QUEUE=redis only)
+//   RIOT_API_KEY     required
+//   RIOT_REGION      americas (regional cluster, not platform)
+//   RIOT_PLATFORM    na1 (platform host, league-v4 rank lookups)
+//   TILT_DB          ../tilt.db
+//   ADDR             :8080
+//   WORKERS          2
+//   QUEUE            memory | redis
+//   REDIS_ADDR       localhost:6379 (QUEUE=redis only)
+//   PANEL_INTERVAL_H 0 = off; e.g. 168 sweeps the longitudinal panel weekly
+//                    (rank snapshot + match top-up for every done player)
 
 import (
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/VinKurup/gotaskqueue"
 	"github.com/redis/go-redis/v9"
@@ -49,8 +53,15 @@ func main() {
 		q = gotaskqueue.NewMemoryQueue("observatory")
 	}
 
-	riot := NewRiotClient(key, env("RIOT_REGION", "americas"))
+	riot := NewRiotClient(key, env("RIOT_REGION", "americas"), env("RIOT_PLATFORM", "na1"))
 	srv := NewServer(store, riot, q)
+
+	if h := os.Getenv("PANEL_INTERVAL_H"); h != "" {
+		if n, err := parsePositive(h); err == nil {
+			srv.StartPanel(time.Duration(n) * time.Hour)
+			log.Printf("panel: sweeping every %dh", n)
+		}
+	}
 
 	workers := 2
 	if w := os.Getenv("WORKERS"); w != "" {

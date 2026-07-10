@@ -56,6 +56,8 @@
     font-size: 13px; font-weight: 650; color: var(--muted);
     text-transform: uppercase; letter-spacing: .04em; margin: 24px 0 10px;
   }
+  .refresh { font-size: 13px; margin: 14px 0 0; }
+  .refresh a { color: var(--accent); text-decoration: none; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 24px; }
   .foot a { color: var(--accent); }
   @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
@@ -128,6 +130,7 @@
         <div class="detail" id="sessions"></div>
       </div>
     </div>
+    <p class="refresh"><a href="#" id="refresh">↻ refresh with your latest games</a></p>
   </section>
 
   <p class="foot">Built on the <a href="https://github.com/VinKurup/tilt-spiral">tilt-spiral
@@ -150,7 +153,10 @@ async function api(path, opts) {
   return { ok: r.ok, status: r.status, body };
 }
 
+let currentId = "";
+
 function render(d) {
+  currentId = d.riotId;
   const p = d.profile;
   if (!p.requeueSamples) {
     status("Not enough within-session ranked games to build a profile yet.", true);
@@ -227,6 +233,18 @@ async function poll(taskId) {
   }
 }
 
+async function crawlThenRender(riotId) {
+  const { body } = await api("/api/lookup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ riotId }),
+  });
+  await poll(body.taskId);
+  const fresh = await api(`/api/profile?riotId=${encodeURIComponent(riotId)}`);
+  if (!fresh.ok) throw new Error(fresh.body.error || "profile unavailable");
+  render(fresh.body);
+}
+
 $("form").addEventListener("submit", async e => {
   e.preventDefault();
   const riotId = $("riotId").value.trim();
@@ -237,16 +255,22 @@ $("form").addEventListener("submit", async e => {
     if (prof.ok) { render(prof.body); }
     if (!prof.ok) {
       status("Looking you up…");
-      const { body } = await api("/api/lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ riotId }),
-      });
-      await poll(body.taskId);
-      const fresh = await api(`/api/profile?riotId=${encodeURIComponent(riotId)}`);
-      if (!fresh.ok) throw new Error(fresh.body.error || "profile unavailable");
-      render(fresh.body);
+      await crawlThenRender(riotId);
     }
+  } catch (err) {
+    status(err.message, true);
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+$("refresh").addEventListener("click", async e => {
+  e.preventDefault();
+  if (!currentId) return;
+  $("go").disabled = true;
+  try {
+    status("Refreshing…");
+    await crawlThenRender(currentId);
   } catch (err) {
     status(err.message, true);
   } finally {

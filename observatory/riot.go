@@ -75,29 +75,31 @@ func (r *rateLimiter) wait(ctx context.Context) error {
 }
 
 type RiotClient struct {
-	key    string
-	base   string // regional cluster, e.g. https://americas.api.riotgames.com
-	http   *http.Client
-	lim    *rateLimiter
-	maxTry int
+	key      string
+	base     string // regional cluster, e.g. https://americas.api.riotgames.com
+	platform string // platform host for league-v4, e.g. https://na1.api.riotgames.com
+	http     *http.Client
+	lim      *rateLimiter
+	maxTry   int
 }
 
-func NewRiotClient(key, region string) *RiotClient {
+func NewRiotClient(key, region, platform string) *RiotClient {
 	return &RiotClient{
-		key:    key,
-		base:   fmt.Sprintf("https://%s.api.riotgames.com", region),
-		http:   &http.Client{Timeout: 15 * time.Second},
-		lim:    newDevKeyLimiter(),
-		maxTry: 4,
+		key:      key,
+		base:     fmt.Sprintf("https://%s.api.riotgames.com", region),
+		platform: fmt.Sprintf("https://%s.api.riotgames.com", platform),
+		http:     &http.Client{Timeout: 15 * time.Second},
+		lim:      newDevKeyLimiter(),
+		maxTry:   4,
 	}
 }
 
-func (c *RiotClient) get(ctx context.Context, path string, out any) error {
+func (c *RiotClient) get(ctx context.Context, base, path string, out any) error {
 	for attempt := 0; ; attempt++ {
 		if err := c.lim.wait(ctx); err != nil {
 			return err
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", c.base+path, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", base+path, nil)
 		if err != nil {
 			return err
 		}
@@ -144,7 +146,7 @@ func (c *RiotClient) PuuidByRiotID(ctx context.Context, name, tag string) (strin
 	}
 	p := fmt.Sprintf("/riot/account/v1/accounts/by-riot-id/%s/%s",
 		url.PathEscape(name), url.PathEscape(tag))
-	if err := c.get(ctx, p, &v); err != nil {
+	if err := c.get(ctx, c.base, p, &v); err != nil {
 		return "", err
 	}
 	return v.Puuid, nil
@@ -153,7 +155,32 @@ func (c *RiotClient) PuuidByRiotID(ctx context.Context, name, tag string) (strin
 func (c *RiotClient) MatchIDs(ctx context.Context, puuid string, count int) ([]string, error) {
 	var ids []string
 	p := fmt.Sprintf("/lol/match/v5/matches/by-puuid/%s/ids?start=0&count=%d", puuid, count)
-	return ids, c.get(ctx, p, &ids)
+	return ids, c.get(ctx, c.base, p, &ids)
+}
+
+// LeagueEntry is a player's current solo-queue standing (league-v4).
+type LeagueEntry struct {
+	QueueType string `json:"queueType"`
+	Tier      string `json:"tier"`
+	Rank      string `json:"rank"` // division: I..IV
+	LP        int    `json:"leaguePoints"`
+	Wins      int    `json:"wins"`
+	Losses    int    `json:"losses"`
+}
+
+// SoloQueueEntry returns the RANKED_SOLO_5x5 entry, or nil if unranked.
+func (c *RiotClient) SoloQueueEntry(ctx context.Context, puuid string) (*LeagueEntry, error) {
+	var entries []LeagueEntry
+	p := "/lol/league/v4/entries/by-puuid/" + puuid
+	if err := c.get(ctx, c.platform, p, &entries); err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].QueueType == "RANKED_SOLO_5x5" {
+			return &entries[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // Match is the slice of match-v5 the store needs.
@@ -182,5 +209,5 @@ type Match struct {
 
 func (c *RiotClient) Match(ctx context.Context, id string) (*Match, error) {
 	var m Match
-	return &m, c.get(ctx, "/lol/match/v5/matches/"+id, &m)
+	return &m, c.get(ctx, c.base, "/lol/match/v5/matches/"+id, &m)
 }

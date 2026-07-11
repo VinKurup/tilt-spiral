@@ -221,7 +221,8 @@ function renderHabits(h, hp) {
 
 async function poll(taskId) {
   for (;;) {
-    const { body } = await api(`/api/tasks/${taskId}`);
+    const { ok, body } = await api(`/api/tasks/${taskId}`);
+    if (!ok) throw new Error("crawl task lost (server restarted?) — try again");
     if (body.status === "completed") return;
     if (body.status === "failed" || body.status === "dead" || body.status === "cancelled")
       throw new Error(`crawl ${body.status} — try again`);

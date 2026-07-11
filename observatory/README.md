@@ -7,11 +7,13 @@ population. Performance-tilt stats are deliberately absent: the study found
 them null.
 
 Job management is [gotaskqueue](https://github.com/VinKurup/gotaskqueue)
-(retries, backoff, dead-letter queue, status). Rate limiting is not the
-queue's job: a dual sliding window in the Riot client enforces the dev-key
-limits (20 req/s and 100 req/2min) across all workers, with 429 Retry-After
-as the backstop. The crawl handler is idempotent, so a retried or redelivered
-task skips what's already stored.
+(retries, backoff, dead-letter queue, status). Interactive lookups and the
+panel sweep run on separate queues, so a sweep (one task per study player)
+can't starve a user's crawl. Rate limiting is not the queue's job: a dual
+sliding window in the Riot client enforces the dev-key limits (20 req/s and
+100 req/2min) across all workers on both queues, with 429 Retry-After as the
+backstop. The crawl handler is idempotent, so a retried or redelivered task
+skips what's already stored.
 
 It reads and writes the **same SQLite schema** as the Python pipeline, so
 `analyze.py` / `traits.py` / `figures.py` keep working against data this
@@ -35,7 +37,7 @@ RIOT_API_KEY=... docker compose up --build
 ```
 
 Config (env): `RIOT_REGION` (americas), `RIOT_PLATFORM` (na1), `TILT_DB`
-(../tilt.db), `ADDR` (:8080), `WORKERS` (2), `QUEUE` (memory | redis),
+(../tilt.db), `ADDR` (:8080), `WORKERS` (2 per queue), `QUEUE` (memory | redis),
 `REDIS_ADDR`, `PANEL_INTERVAL_H` (0 = off; 168 sweeps the longitudinal
 panel weekly — rank snapshot + match top-up for every done player).
 `QUEUE=memory` is single-process and ephemeral; `QUEUE=redis` gives

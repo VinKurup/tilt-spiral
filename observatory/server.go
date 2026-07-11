@@ -46,16 +46,21 @@ type progress struct {
 type Server struct {
 	store *Store
 	riot  *RiotClient
-	queue gotaskqueue.Queue
+	// Separate queues: a panel sweep enqueues one task per study player, and
+	// on a shared FIFO that starves interactive lookups for the whole sweep.
+	// Both queues still share the Riot rate limiter (one key), so a sweep
+	// slows a lookup by seconds, not half an hour.
+	lookupQ gotaskqueue.Queue
+	panelQ  gotaskqueue.Queue
 
 	mu   sync.Mutex
 	prog map[string]*progress // task id -> crawl progress (in-process, v1)
 }
 
-func NewServer(store *Store, riot *RiotClient, q gotaskqueue.Queue) *Server {
-	s := &Server{store: store, riot: riot, queue: q, prog: map[string]*progress{}}
-	q.Register(taskCrawlPlayer, s.handleCrawl)
-	q.Register(taskPanelPlayer, s.handlePanel)
+func NewServer(store *Store, riot *RiotClient, lookupQ, panelQ gotaskqueue.Queue) *Server {
+	s := &Server{store: store, riot: riot, lookupQ: lookupQ, panelQ: panelQ, prog: map[string]*progress{}}
+	lookupQ.Register(taskCrawlPlayer, s.handleCrawl)
+	panelQ.Register(taskPanelPlayer, s.handlePanel)
 	return s
 }
 
@@ -174,7 +179,7 @@ func (s *Server) enqueuePanelSweep() {
 	n := 0
 	for _, pu := range puuids {
 		data, _ := json.Marshal(panelArgs{Puuid: pu, At: at})
-		if _, err := s.queue.Enqueue(taskPanelPlayer, data); err != nil {
+		if _, err := s.panelQ.Enqueue(taskPanelPlayer, data); err != nil {
 			log.Printf("panel: enqueue %s: %v", pu, err)
 			continue
 		}
@@ -214,7 +219,7 @@ func (s *Server) apiLookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := json.Marshal(crawlArgs{RiotID: req.RiotID, Count: 100})
-	id, err := s.queue.Enqueue(taskCrawlPlayer, data)
+	id, err := s.lookupQ.Enqueue(taskCrawlPlayer, data)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -224,7 +229,7 @@ func (s *Server) apiLookup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	t, ok, err := s.queue.GetTask(id)
+	t, ok, err := s.lookupQ.GetTask(id) // the UI only polls crawl tasks
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -292,7 +297,12 @@ func (s *Server) apiProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiStats(w http.ResponseWriter, r *http.Request) {
-	qs, err := s.queue.Stats()
+	lq, err := s.lookupQ.Stats()
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	pq, err := s.panelQ.Stats()
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -303,7 +313,7 @@ func (s *Server) apiStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"queue": qs,
+		"queue": map[string]any{"lookup": lq, "panel": pq},
 		"db":    map[string]int{"matches": matches, "players": players},
 	})
 }

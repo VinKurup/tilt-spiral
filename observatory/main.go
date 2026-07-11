@@ -9,7 +9,7 @@ package main
 //   RIOT_PLATFORM    na1 (platform host, league-v4 rank lookups)
 //   TILT_DB          ../tilt.db
 //   ADDR             :8080
-//   WORKERS          2
+//   WORKERS          2 (per queue: lookups and panel sweeps run separately)
 //   QUEUE            memory | redis
 //   REDIS_ADDR       localhost:6379 (QUEUE=redis only)
 //   PANEL_INTERVAL_H 0 = off; e.g. 168 sweeps the longitudinal panel weekly
@@ -45,16 +45,18 @@ func main() {
 	}
 	defer store.Close()
 
-	var q gotaskqueue.Queue
+	var lookupQ, panelQ gotaskqueue.Queue
 	if env("QUEUE", "memory") == "redis" {
 		client := redis.NewClient(&redis.Options{Addr: env("REDIS_ADDR", "localhost:6379")})
-		q = gotaskqueue.NewRedisQueue(client, "observatory")
+		lookupQ = gotaskqueue.NewRedisQueue(client, "observatory")
+		panelQ = gotaskqueue.NewRedisQueue(client, "observatory-panel")
 	} else {
-		q = gotaskqueue.NewMemoryQueue("observatory")
+		lookupQ = gotaskqueue.NewMemoryQueue("observatory")
+		panelQ = gotaskqueue.NewMemoryQueue("observatory-panel")
 	}
 
 	riot := NewRiotClient(key, env("RIOT_REGION", "americas"), env("RIOT_PLATFORM", "na1"))
-	srv := NewServer(store, riot, q)
+	srv := NewServer(store, riot, lookupQ, panelQ)
 
 	if h := os.Getenv("PANEL_INTERVAL_H"); h != "" {
 		if n, err := parsePositive(h); err == nil {
@@ -69,8 +71,10 @@ func main() {
 			workers = n
 		}
 	}
-	q.Start(workers)
-	defer q.Stop()
+	lookupQ.Start(workers)
+	defer lookupQ.Stop()
+	panelQ.Start(workers)
+	defer panelQ.Stop()
 
 	httpSrv := &http.Server{Addr: env("ADDR", ":8080"), Handler: srv.Routes()}
 	go func() {

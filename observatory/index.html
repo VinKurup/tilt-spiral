@@ -67,8 +67,8 @@
 <main>
   <h1>Tilt Spiral</h1>
   <p class="sub">Not your performance — your <em>behavior</em>. Performance tilt was
-  tested across 345 ladder players and found null; what's real is how the queue
-  pulls you back after a loss. This is a mirror, not a stop sign.</p>
+  tested across hundreds of ladder players and found null; what's real is how the
+  queue pulls you back after a loss. This is a mirror, not a stop sign.</p>
 
   <form id="form">
     <input id="riotId" placeholder="Name#TAG" autocomplete="off" required>
@@ -83,7 +83,7 @@
       <div class="detail" id="pctDetail"></div>
     </div>
     <div class="sect" id="leaksHead" style="display:none">measured leaks — habits with a
-    winrate price across the 345 study players</div>
+    winrate price across the study players</div>
     <div class="grid" id="leaks" style="display:none">
       <div class="card">
         <div class="label">effective champion pool</div>
@@ -145,6 +145,12 @@ const status = (msg, err) => {
 };
 const min = v => `${Math.abs(v).toFixed(1)} min`;
 const pct = v => `${Math.round(v * 100)}%`;
+// 95% CI half-width in pp, Agresti–Coull so tiny samples never show ±0.
+const wrCI = (p, n) => {
+  if (!n) return "–";
+  const pt = (Math.round(p * n) + 2) / (n + 4);
+  return `${Math.round(p * 100)}%±${Math.round(196 * Math.sqrt(pt * (1 - pt) / (n + 4)))}`;
+};
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -174,21 +180,27 @@ function render(d) {
   $("quitLoss").textContent = pct(1 - p.quitAfterLoss);
   $("quitWin").textContent =
     `chance you keep playing after a loss · after a win: ${pct(1 - p.quitAfterWin)}`;
-  $("wrL2").textContent = p.gamesAfterL2Plus ? pct(p.winrateAfterL2Plus) : "n/a";
+  const popN = d.populationN || (d.habitPercentiles && d.habitPercentiles.populationN);
+  $("wrL2").textContent = p.gamesAfterL2Plus
+    ? wrCI(p.winrateAfterL2Plus, p.gamesAfterL2Plus) : "n/a";
   $("wrL2Detail").textContent = p.gamesAfterL2Plus
     ? `your overall: ${pct(p.winrate)} · ${p.gamesAfterL2Plus} games is a small sample — ` +
-      `across 345 players these rates match`
+      `across ${popN || "the"} study players these rates match`
     : "no 2+ loss streaks in sample";
-  if (d.habits) renderHabits(d.habits, d.habitPercentiles);
+  if (d.habits) renderHabits(d.habits, d.habitPercentiles, p.rankedGames);
   $("games").textContent = p.rankedGames;
   $("sessions").textContent = `ranked games across ${p.sessions} sessions`;
   $("result").style.display = "block";
   status("");
 }
 
-function renderHabits(h, hp) {
+function renderHabits(h, hp, nGames) {
   const vs = (key, phrase) => hp && hp[key] !== undefined
     ? ` · ${phrase} ${pct(hp[key])} of ${hp.populationN} study players` : "";
+  if (hp && hp.populationN) {
+    $("leaksHead").textContent = `measured leaks — habits with a winrate price ` +
+      `across the ${hp.populationN} study players`;
+  }
   $("pool").textContent = h.effectiveChamps.toFixed(1);
   $("poolDetail").textContent =
     `${h.distinctChamps} champions in sample${vs("effectiveChamps", "broader than")} · ` +
@@ -197,19 +209,22 @@ function renderHabits(h, hp) {
   $("debutDetail").textContent =
     `${h.debuts} debuts` +
     (h.debuts && h.debutShare < 1
-      ? `: ${pct(h.winrateDebut)} wr vs ${pct(h.winrateRepeat)} on repeats` : "") +
+      ? `: ${wrCI(h.winrateDebut, h.debuts)} wr vs ` +
+        `${wrCI(h.winrateRepeat, nGames - h.debuts)} on repeats` : "") +
     `${vs("debutShare", "more than")} · debuts cost −5.0pp across the study`;
   $("offLabel").textContent = `games off ${h.modalRole.toLowerCase()}`;
   $("off").textContent = pct(h.offRoleShare);
   $("offDetail").textContent = h.offRoleGames
-    ? `on-role ${pct(h.winrateOnRole)} · off-role ${pct(h.winrateOffRole)}` +
+    ? `on-role ${wrCI(h.winrateOnRole, nGames - h.offRoleGames)} · ` +
+      `off-role ${wrCI(h.winrateOffRole, h.offRoleGames)}` +
       `${vs("offRoleShare", "more off-role than")} · study cost −4.1pp`
     : "never — single-role sample";
   if (h.comfortGames) {
-    $("comfort").textContent = pct(h.winrateComfort);
+    $("comfort").textContent = wrCI(h.winrateComfort, h.comfortGames);
     $("comfortDetail").textContent =
       `winrate over ${h.comfortGames} comfort games · unfamiliar (≤2 prior): ` +
-      `${pct(h.winrateUnfamiliar)} · comfort is worth +4.0pp across the study`;
+      `${wrCI(h.winrateUnfamiliar, h.unfamiliarGames)} · ` +
+      `comfort is worth +4.0pp across the study`;
   } else {
     $("comfort").textContent = "none";
     $("comfortDetail").textContent =

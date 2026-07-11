@@ -62,7 +62,7 @@ crawler and the panel at different times — they share the key's rate budget.
 |---|---|
 | `POST /api/lookup` `{"riotId":"Name#TAG"}` | enqueue a crawl of the player's last 100 ranked games → `{taskId}` |
 | `GET /api/tasks/{id}` | queue status + crawl progress |
-| `GET /api/profile?riotId=Name%23TAG` | behavioral profile + chase percentile vs the study's 345 players |
+| `GET /api/profile?riotId=Name%23TAG` | behavioral profile + chase percentile vs the study players |
 | `GET /api/stats` | queue stats + db counts |
 | `GET /healthz` | liveness |
 
